@@ -3,6 +3,7 @@
 A responsive online pharmacy storefront with a browser-only admin demo, built with HTML, CSS and vanilla JavaScript. No frameworks, build step or backend.
 
 **Live site:** https://mahmoudabdulla9.github.io/medicare-pharmacy/
+
 **Admin demo:** https://mahmoudabdulla9.github.io/medicare-pharmacy/admin.html
 
 ## Features
