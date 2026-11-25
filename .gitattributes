@@ -1,0 +1,3 @@
+# JavaScript and CSS here are hand-written. Long lines make GitHub treat them as generated.
+*.js linguist-generated=false
+*.css linguist-generated=false
