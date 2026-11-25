@@ -1,27 +1,20 @@
-# MediCare Pharmacy — Portfolio Demo
+# MediCare Pharmacy — Interactive Storefront Demo
 
-A responsive front-end pharmacy storefront concept built with HTML, CSS and vanilla JavaScript.
+Responsive pharmacy-style storefront portfolio project built with HTML, CSS and vanilla JavaScript.
 
 ## Run locally
-1. Download or clone this repository.
-2. Open `index.html` in a modern browser.
-3. No build tools, server, or package installation required.
+1. Clone or download this repository.
+2. Open index.html in a modern browser.
+3. No build tools or package installation required.
 
 ## Features
 - Responsive desktop, tablet and mobile layouts
-- Mobile navigation menu
-- Product catalog, category filters and live search
-- Add-to-cart and quantity controls
-- Cart drawer with subtotal
-- Demo checkout interaction
+- 12 sample products with descriptions, ratings and demo stock
+- Product search, category filters and sorting
+- Shopping cart with quantity controls and localStorage persistence
+- Checkout form with sample customer and delivery details
+- Demo order confirmation and browser-local order history
 - Contact form validation and demo confirmation
-- Accessible labels and reduced-motion support
 
-## Publish with GitHub Pages
-1. Open **Settings → Pages**.
-2. Under **Build and deployment**, choose **Deploy from a branch**.
-3. Select **main** and **/(root)**, then Save.
-4. Wait for GitHub Pages to publish the site.
-
-## Important
-This is a portfolio demonstration only. Product names and prices are sample data. It does not provide medical advice, process real orders, send contact messages, or collect payments.
+## Important limitations
+This is a front-end portfolio demo. All products, prices, ratings and stock are fictional. Cart and orders are stored only in the visitor's browser. There is no backend, real inventory, prescription handling, pharmacy integration, payment gateway, actual delivery or real order processing. The site does not provide medical advice. Never enter real sensitive or payment information.
