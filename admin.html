@@ -1,12 +1,79 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MediCare Admin</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><link rel="icon" href="./assets/images/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./css/style.css"></head>
-<body class="admin-body"><header class="admin-top"><a class="brand" href="./index.html"><span class="brand-mark">✚</span><span>MediCare<small>ADMIN PANEL</small></span></a><a href="./index.html" class="text-link">← View store</a></header>
-<main class="admin-main"><p class="demo-warning" role="note"><strong>Demonstration only.</strong> This dashboard has no login and no server. Data is kept in this browser with LocalStorage and is not shared between users or devices. It is not a secure system and must not be used to manage a real pharmacy.</p>
-<section id="dashboard"><div class="admin-heading"><div><span class="eyebrow">OVERVIEW</span><h1>Store dashboard</h1><p id="adminWelcome"></p></div><button class="outline-btn" id="resetBtn">Reset demo data</button></div>
-<div class="stats-grid" id="statsGrid"></div><div class="admin-tabs"><button class="tab active" data-tab="products">Products</button><button class="tab" data-tab="orders">Orders</button><button class="tab" data-tab="messages">Messages</button></div>
-<section id="productsTab" class="admin-panel"><div class="panel-heading"><div><h2>Products</h2><p>Add, edit or hide products in your store.</p></div><button class="primary-btn" id="addProductBtn">+ Add product</button></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody id="adminProducts"></tbody></table></div></section>
-<section id="ordersTab" class="admin-panel hidden"><div class="panel-heading"><div><h2>Customer orders</h2><p>Review orders and update their status.</p></div></div><div id="adminOrders" class="orders-list"></div></section>
-<section id="messagesTab" class="admin-panel hidden"><div class="panel-heading"><div><h2>Contact messages</h2><p>Messages sent from the contact form in this browser.</p></div></div><div id="adminMessages" class="orders-list"></div></section></section></main>
-<div class="overlay hidden" id="overlay"></div><div class="toast" id="toast" role="status" aria-live="polite"></div><div class="modal hidden" id="productModal" role="dialog" aria-modal="true" aria-label="Product form"><div class="modal-head"><div><span class="eyebrow">CATALOGUE</span><h2 id="productModalTitle">Add product</h2></div><button class="icon-btn" aria-label="Close form" data-close="productModal">×</button></div><form id="productForm" class="checkout-form"><input type="hidden" name="id"><div class="form-grid"><label>Product name<input name="name" required maxlength="120"></label><label>Category<select name="category"><option>Medicines</option><option>Vitamins</option><option>Personal Care</option><option>Devices</option></select></label><label>Price (EGP)<input name="price" type="number" min="0.01" step="0.01" required></label><label>Stock quantity<input name="stock" type="number" min="0" step="1" required></label><label class="wide">Image URL (optional)<input name="image" pattern="https://.+|assets/.+" title="Use an https:// address" placeholder="https://..."></label><label class="wide">Description<textarea name="description" required minlength="5" maxlength="500"></textarea></label><label class="check-label"><input name="featured" type="checkbox"> Featured product</label></div><button class="primary-btn full">Save product</button><p class="feedback" id="productFeedback"></p></form></div>
-<script src="./js/data.js"></script>
-<script src="./js/admin.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>MediCare Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" href="./assets/images/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body class="admin-body">
+<header class="admin-top">
+  <a class="brand" href="./index.html"><span class="brand-mark">✚</span><span>MediCare<small>ADMIN PANEL</small></span></a>
+  <a href="./index.html" class="text-link">← View store</a>
+</header>
+<main class="admin-main">
+  <section id="checkingPanel" class="login-card"><p class="loading">Checking your session...</p></section>
+
+  <section id="loginPanel" class="login-card hidden">
+    <span class="eyebrow">STAFF ONLY</span>
+    <h1>Admin sign in</h1>
+    <p>Sign in with the pharmacy's admin account to manage products and orders.</p>
+    <form id="loginForm">
+      <label>Email<input name="email" type="email" required autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="primary-btn full" type="submit">Sign in</button>
+      <p class="feedback" id="loginFeedback" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="dashboard" class="hidden">
+    <div class="admin-heading">
+      <div><span class="eyebrow">OVERVIEW</span><h1>Store dashboard</h1><p id="adminWelcome"></p></div>
+      <button class="outline-btn" id="logoutBtn" type="button">Sign out</button>
+    </div>
+    <div class="stats-grid" id="statsGrid"></div>
+    <div class="admin-tabs">
+      <button class="tab active" data-tab="products" type="button">Products</button>
+      <button class="tab" data-tab="orders" type="button">Orders</button>
+      <button class="tab" data-tab="messages" type="button">Messages</button>
+    </div>
+    <section id="productsTab" class="admin-panel">
+      <div class="panel-heading"><div><h2>Products</h2><p>Add, edit or hide products in your store.</p></div><button class="primary-btn" id="addProductBtn" type="button">+ Add product</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead><tbody id="adminProducts"><tr><td colspan="6">Loading products...</td></tr></tbody></table></div>
+    </section>
+    <section id="ordersTab" class="admin-panel hidden">
+      <div class="panel-heading"><div><h2>Customer orders</h2><p>Confirming an order takes its items out of stock. Cancelling a confirmed order puts them back.</p></div></div>
+      <div id="adminOrders" class="orders-list"><p class="empty">Loading orders...</p></div>
+    </section>
+    <section id="messagesTab" class="admin-panel hidden">
+      <div class="panel-heading"><div><h2>Contact messages</h2><p>Messages sent from the contact form.</p></div></div>
+      <div id="adminMessages" class="orders-list"><p class="empty">Loading messages...</p></div>
+    </section>
+  </section>
+</main>
+
+<div class="overlay hidden" id="overlay"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="modal hidden" id="productModal" role="dialog" aria-modal="true" aria-label="Product form">
+  <div class="modal-head"><div><span class="eyebrow">CATALOGUE</span><h2 id="productModalTitle">Add product</h2></div><button class="icon-btn" aria-label="Close form" data-close="productModal" type="button">×</button></div>
+  <form id="productForm" class="checkout-form">
+    <input type="hidden" name="id">
+    <div class="form-grid">
+      <label>Product name<input name="name" required minlength="2" maxlength="120"></label>
+      <label>Category<select name="category" id="categorySelect"></select></label>
+      <label>Price (EGP)<input name="price" type="number" min="0.01" step="0.01" required></label>
+      <label>Stock quantity<input name="stock" type="number" min="0" step="1" required></label>
+      <label class="wide">Image URL (optional)<input name="image" pattern="https://.+|assets/.+" title="Use an https:// address" placeholder="https://..."></label>
+      <label class="wide">Description<textarea name="description" required minlength="5" maxlength="500"></textarea></label>
+      <label class="check-label"><input name="featured" type="checkbox"> Featured product</label>
+    </div>
+    <button class="primary-btn full" type="submit">Save product</button>
+    <p class="feedback" id="productFeedback" role="alert"></p>
+  </form>
+</div>
+<script type="module" src="./js/admin.js"></script>
+</body>
+</html>
