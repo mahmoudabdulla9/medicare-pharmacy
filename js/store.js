@@ -1,51 +1,427 @@
-const $ = (s) => document.querySelector(s);
-const money = (n) => `EGP ${Number(n).toFixed(2)}`;
+// Storefront: products and orders live in Firestore, the cart stays in this browser.
+import { PLACEHOLDER_IMAGE, deliveryFee, money, escapeHtml, safeImage } from "./data.js";
+import { SHOW_DEMO_NOTICE } from "./firebase-config.js";
+import { isConfigured, db, auth, fs, au } from "./firebase.js";
 
-const read = (key, fallback) => { try { const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; } catch { return fallback; } };
-const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } };
-let products = read("medicare_products", SEED_PRODUCTS);
-let cart = read("medicare_cart", []), activeCategory = "All", toastTimer;
-function toast(message, isError) { const t = $("#toast"); t.textContent = message; t.className = "toast show" + (isError ? " error" : ""); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2800); }
-const stockText = p => p.stock < 1 ? `<span class="stock out">Out of stock</span>` : p.stock <= 5 ? `<span class="stock low">Only ${p.stock} left</span>` : `<span class="stock">${p.stock} in stock</span>`;
-const deliveryFee = subtotal => subtotal >= 500 || subtotal === 0 ? 0 : 25;
+const $ = (selector) => document.querySelector(selector);
+
+let products = [];
+let productsLoaded = false;
+let cart = readCart();
+let activeCategory = "All";
+let toastTimer;
+let lastFocus = null;
+
+// Data from the earlier browser-only version is no longer used.
+["medicare_products", "medicare_orders", "medicare_messages", "medicare_catalogue_version"].forEach((key) => {
+  try { localStorage.removeItem(key); } catch { /* storage blocked */ }
+});
+
+/* ---------- Cart (saved in this browser) ---------- */
+
+function readCart() {
+  try {
+    const value = JSON.parse(localStorage.getItem("medicare_cart"));
+    return Array.isArray(value) ? value.filter((i) => i && typeof i.id === "string" && i.quantity > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCart() {
+  try { localStorage.setItem("medicare_cart", JSON.stringify(cart)); } catch { /* storage blocked */ }
+  renderCart();
+}
+
 // Keeps the cart valid when products were hidden or their stock changed.
-function reconcileCart() { let changed = false; cart = cart.filter(i => { const p = products.find(x => x.id === i.id && x.active !== 0); if (!p || p.stock < 1) { changed = true; return false; } if (i.quantity > p.stock) { i.quantity = p.stock; changed = true; } return true; }); if (changed) save("medicare_cart", cart); return changed; }
-const escapeHtml = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-function loadProducts(){
- const q=$("#searchInput").value.trim().toLowerCase(), sort=$("#sortSelect").value;
- let list=products.filter(p=>p.active!==0 && (activeCategory==="All"||p.category===activeCategory) && (!$("#stockOnly").checked||p.stock>0) && (p.name+" "+p.category+" "+(p.description||"")).toLowerCase().includes(q));
- if(sort==="price-low")list.sort((a,b)=>a.price-b.price); else if(sort==="price-high")list.sort((a,b)=>b.price-a.price); else if(sort==="name")list.sort((a,b)=>a.name.localeCompare(b.name)); else list.sort((a,b)=>b.featured-a.featured);
- renderProducts(list);
+function reconcileCart() {
+  if (!productsLoaded) return false;
+  let changed = false;
+  cart = cart.filter((item) => {
+    const p = products.find((x) => x.id === item.id);
+    if (!p || p.stock < 1) { changed = true; return false; }
+    if (item.quantity > p.stock) { item.quantity = p.stock; changed = true; }
+    return true;
+  });
+  if (changed) saveCart();
+  return changed;
 }
-function renderProducts(list){
- $("#productGrid").innerHTML=list.map(p=>`<article class="product-card"><div class="product-image" data-view="${p.id}">${p.image?`<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" loading="lazy">`:'<span class="placeholder">✚</span>'}<span class="product-tag">${p.stock>0?(p.featured?"POPULAR":escapeHtml(p.category)):"OUT OF STOCK"}</span></div><div class="product-info"><span class="product-category">${escapeHtml(p.category)}</span><h3><button class="name-btn" type="button" data-view="${p.id}">${escapeHtml(p.name)}</button></h3><p>${escapeHtml(p.description)}</p>${stockText(p)}<div class="product-bottom"><span class="product-price">${money(p.price)}</span><button class="add-btn" aria-label="Add ${escapeHtml(p.name)} to cart" data-add="${p.id}" ${p.stock<1?'disabled':''}>${p.stock<1?'Unavailable':'＋ Add'}</button></div></div></article>`).join("");
- $("#emptyState").classList.toggle("hidden",list.length>0);
+
+function cartDetails() {
+  return cart
+    .map((item) => {
+      const p = products.find((x) => x.id === item.id);
+      return p ? { ...p, quantity: item.quantity } : null;
+    })
+    .filter(Boolean);
 }
-function saveCart(){save("medicare_cart",cart);renderCart();}
-function cartDetails(){return cart.map(i=>{const p=products.find(x=>x.id===i.id&&x.active!==0);return p?{...p,quantity:i.quantity}:null}).filter(Boolean);}
-function renderCart(){const d=cartDetails(),count=d.reduce((s,p)=>s+p.quantity,0),sub=d.reduce((s,p)=>s+p.price*p.quantity,0);$("#cartCount").textContent=count;$("#cartSubtotal").textContent=$("#checkoutSubtotal").textContent=money(sub);$("#cartDelivery").textContent=$("#checkoutDelivery").textContent=d.length&&!deliveryFee(sub)?"Free":money(deliveryFee(sub));$("#cartTotal").textContent=money(sub+deliveryFee(sub));$("#cartItems").innerHTML=d.length?d.map(p=>`<div class="cart-row"><img class="cart-thumb" src="${escapeHtml(p.image||PLACEHOLDER_IMAGE)}" alt=""><div><strong>${escapeHtml(p.name)}</strong><small>${money(p.price)} each · ${money(p.price*p.quantity)}</small></div><div class="qty-controls"><button data-qty="${p.id}" data-delta="-1" aria-label="Decrease quantity of ${escapeHtml(p.name)}">−</button><span>${p.quantity}</span><button data-qty="${p.id}" data-delta="1" aria-label="Increase quantity of ${escapeHtml(p.name)}" ${p.quantity>=p.stock?'disabled':''}>＋</button><button data-remove="${p.id}" aria-label="Remove ${escapeHtml(p.name)}">×</button></div></div>`).join(""):'<div class="empty"><p>Your cart is empty.</p><button class="outline-btn" type="button" data-shop>Browse products</button></div>';$("#checkoutBtn").disabled=!d.length;$("#checkoutBtn").style.opacity=d.length?1:.5;$("#checkoutTotal").textContent=money(sub+deliveryFee(sub));}
-function openCart(){if(reconcileCart())toast("Your cart was updated to match current stock.",true);renderCart();$("#overlay").classList.remove("hidden");$("#cartDrawer").classList.add("open");}function closeCart(){$("#overlay").classList.add("hidden");$("#cartDrawer").classList.remove("open");}
-$("#productGrid").addEventListener("click",e=>{const b=e.target.closest("[data-add]");if(!b)return;addToCart(Number(b.dataset.add),1);});
-function addToCart(id,qty){const p=products.find(x=>x.id===id&&x.active!==0);if(!p||p.stock<1){toast("This product is not available.",true);return false;}const item=cart.find(x=>x.id===id),have=item?item.quantity:0;if(have>=p.stock){toast(`You already have all ${p.stock} in your cart.`,true);return false;}const next=Math.min(p.stock,have+qty);if(item)item.quantity=next;else cart.push({id,quantity:next});saveCart();toast(`${p.name} added to cart`);return true;}
-function openProduct(id){const p=products.find(x=>x.id===id&&x.active!==0);if(!p)return;const out=p.stock<1;$("#productDetails").innerHTML=`<div class="details-grid"><div class="details-image"><img src="${escapeHtml(p.image||PLACEHOLDER_IMAGE)}" alt="${escapeHtml(p.name)}"></div><div><span class="product-category">${escapeHtml(p.category)}</span><h2>${escapeHtml(p.name)}</h2><strong class="details-price">${money(p.price)}</strong><p>${escapeHtml(p.description||"No description yet.")}</p>${stockText(p)}<form class="details-buy" id="detailsForm" data-id="${p.id}"><label>Quantity<input name="qty" type="number" min="1" max="${Math.max(1,p.stock)}" step="1" value="1" required ${out?"disabled":""}></label><button class="primary-btn" ${out?"disabled":""}>${out?"Out of stock":"Add to cart"}</button></form><p class="demo-note">Sample listing, not medical advice. Ask a pharmacist about any real product.</p></div></div>`;openModal("productModal");}
-$("#productDetails").addEventListener("submit",e=>{e.preventDefault();const f=e.target.closest("#detailsForm");if(addToCart(Number(f.dataset.id),Math.max(1,Math.floor(Number(f.elements.qty.value)||1))))closeModals();});
-$("#productGrid").addEventListener("click",e=>{const v=e.target.closest("[data-view]");if(v)openProduct(Number(v.dataset.view));});
-let lastFocus=null;
-function openModal(id){closeCart();document.querySelectorAll(".modal").forEach(m=>m.classList.add("hidden"));lastFocus=document.activeElement;$("#overlay").classList.remove("hidden");const m=$("#"+id);m.classList.remove("hidden");m.scrollTop=0;const first=m.querySelector("input:not([disabled]),button");if(first)first.focus();}
-function closeModals(){const open=[...document.querySelectorAll(".modal")].some(m=>!m.classList.contains("hidden"));document.querySelectorAll(".modal").forEach(m=>m.classList.add("hidden"));$("#overlay").classList.add("hidden");if(open&&lastFocus&&lastFocus.isConnected)lastFocus.focus();}
-function showOrders(){const orders=read("medicare_orders",[]);$("#myOrders").innerHTML=orders.length?orders.map(o=>`<article class="order-card"><div class="order-top"><strong>Order #${o.id}</strong><span class="status-pill">${escapeHtml(o.status)}</span></div><p>${new Date(o.created_at).toLocaleString("en-GB")}</p><ul>${o.items.map(i=>`<li>${escapeHtml(i.product_name)} &times; ${i.quantity} (${money(i.price*i.quantity)})</li>`).join("")}</ul><strong>${money(o.total)}</strong> <small>including ${money(o.delivery_fee)} delivery</small></article>`).join(""):"<p class=\"empty\">No demo orders yet. Orders placed in this browser appear here.</p>";openModal("ordersModal");}
-document.addEventListener("click",e=>{if(e.target.closest("[data-orders]")){e.preventDefault();showOrders();}if(e.target.closest("[data-shop]")){closeCart();$("#products").scrollIntoView();}});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeModals();closeCart();}});
-$("#stockOnly").addEventListener("change",loadProducts);
-$("#clearFilters").addEventListener("click",()=>{$("#searchInput").value="";$("#stockOnly").checked=false;activeCategory="All";document.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active",x.dataset.category==="All"));loadProducts();});
-// Follow changes made in another tab, for example in the admin demo.
-window.addEventListener("storage",e=>{if(e.key==="medicare_products"||e.key==="medicare_cart"){products=read("medicare_products",SEED_PRODUCTS);cart=read("medicare_cart",[]);loadProducts();renderCart();}if(e.key==="medicare_orders"&&!$("#ordersModal").classList.contains("hidden"))showOrders();});
-$("#cartItems").addEventListener("click",e=>{const q=e.target.closest("[data-qty]"),r=e.target.closest("[data-remove]");if(r)cart=cart.filter(x=>x.id!==Number(r.dataset.remove));if(q){const item=cart.find(x=>x.id===Number(q.dataset.qty));if(item){item.quantity+=Number(q.dataset.delta);if(item.quantity<1)cart=cart.filter(x=>x!==item);}}saveCart();});
-$("#filters").addEventListener("click",e=>{const b=e.target.closest("[data-category]");if(!b)return;activeCategory=b.dataset.category;document.querySelectorAll(".filter").forEach(x=>x.classList.toggle("active",x===b));loadProducts();});
-let searchTimer;$("#searchInput").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadProducts,200)});$("#sortSelect").addEventListener("change",loadProducts);
-$("#openCart").addEventListener("click",openCart);$("#closeCart").addEventListener("click",closeCart);$("#overlay").addEventListener("click",()=>{closeModals();closeCart();});
-$("#checkoutBtn").addEventListener("click",()=>{$("#checkoutFeedback").textContent="";openModal("checkoutModal");});
-document.addEventListener("click",e=>{const b=e.target.closest("[data-close]");if(b)closeModals();});
-$("#checkoutForm").addEventListener("submit",e=>{e.preventDefault();products=read("medicare_products",SEED_PRODUCTS);if(reconcileCart()){renderCart();$("#checkoutFeedback").textContent="Stock changed, so your cart was updated. Check the total and place the order again.";return;}const f=new FormData(e.currentTarget),details=cartDetails(),subtotal=details.reduce((s,p)=>s+p.price*p.quantity,0),fee=deliveryFee(subtotal);if(!details.length)return;for(const item of cart){const p=products.find(x=>x.id===item.id);if(!p||p.stock<item.quantity){$("#checkoutFeedback").textContent=`Not enough stock for ${p?.name||'one item'}.`;return;}}const order={id:Date.now(),customer_name:f.get("name"),email:f.get("email"),phone:f.get("phone"),address:f.get("address"),notes:f.get("notes"),items:details.map(p=>({product_id:p.id,product_name:p.name,price:p.price,quantity:p.quantity})),subtotal,delivery_fee:fee,total:subtotal+fee,status:"Pending",created_at:new Date().toISOString()};const orders=read("medicare_orders",[]);orders.unshift(order);if(!save("medicare_orders",orders)){$("#checkoutFeedback").textContent="This browser could not save the order. Check that storage is allowed.";return;}cart.forEach(i=>{const p=products.find(x=>x.id===i.id);if(p)p.stock-=i.quantity;});save("medicare_products",products);cart=[];saveCart();e.currentTarget.reset();$("#successMessage").textContent=`Your demo order #${order.id} was saved in this browser. Total: ${money(order.total)}. No payment or delivery is processed.`;openModal("successModal");loadProducts();});
-$("#contactForm").addEventListener("submit",e=>{e.preventDefault();const ok=save("medicare_messages",[{id:Date.now(),name:$("#contactName").value.trim(),email:$("#contactEmail").value.trim(),message:$("#contactMessage").value.trim(),created_at:new Date().toISOString()},...read("medicare_messages",[])]);$("#contactFeedback").textContent=ok?"Thanks! Your demo message was saved in this browser. Nothing was emailed.":"This browser could not save the message.";if(ok)e.currentTarget.reset();});
-$("#menuToggle").addEventListener("click",()=>$("#menuToggle").setAttribute("aria-expanded",String($("#mainNav").classList.toggle("open"))));$("#mainNav").addEventListener("click",e=>{if(e.target.tagName==="A"){$("#mainNav").classList.remove("open");$("#menuToggle").setAttribute("aria-expanded","false");}});$("#year").textContent=new Date().getFullYear();reconcileCart();loadProducts();renderCart();
+
+function addToCart(id, qty) {
+  const p = products.find((x) => x.id === id);
+  if (!p || p.stock < 1) { toast("This product is not available.", true); return false; }
+  const item = cart.find((x) => x.id === id);
+  const have = item ? item.quantity : 0;
+  if (have >= p.stock) { toast(`You already have all ${p.stock} in your cart.`, true); return false; }
+  const next = Math.min(p.stock, have + qty);
+  if (item) item.quantity = next;
+  else cart.push({ id, quantity: next });
+  saveCart();
+  toast(`${p.name} added to cart`);
+  return true;
+}
+
+/* ---------- Rendering ---------- */
+
+function toast(message, isError) {
+  const t = $("#toast");
+  t.textContent = message;
+  t.className = "toast show" + (isError ? " error" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+const stockText = (p) =>
+  p.stock < 1 ? `<span class="stock out">Out of stock</span>`
+  : p.stock <= 5 ? `<span class="stock low">Only ${p.stock} left</span>`
+  : `<span class="stock">${p.stock} in stock</span>`;
+
+function loadProducts() {
+  if (!productsLoaded) return;
+  const q = $("#searchInput").value.trim().toLowerCase();
+  const sort = $("#sortSelect").value;
+  const list = products.filter((p) =>
+    (activeCategory === "All" || p.category === activeCategory)
+    && (!$("#stockOnly").checked || p.stock > 0)
+    && `${p.name} ${p.category} ${p.description || ""}`.toLowerCase().includes(q));
+  if (sort === "price-low") list.sort((a, b) => a.price - b.price);
+  else if (sort === "price-high") list.sort((a, b) => b.price - a.price);
+  else if (sort === "name") list.sort((a, b) => a.name.localeCompare(b.name));
+  else list.sort((a, b) => Number(b.featured) - Number(a.featured) || a.name.localeCompare(b.name));
+  renderProducts(list);
+}
+
+function renderProducts(list) {
+  $("#productGrid").innerHTML = list.map((p) => `
+    <article class="product-card">
+      <div class="product-image" data-view="${escapeHtml(p.id)}">
+        <img src="${escapeHtml(safeImage(p.image))}" alt="${escapeHtml(p.name)}" loading="lazy">
+        <span class="product-tag">${p.stock > 0 ? (p.featured ? "POPULAR" : escapeHtml(p.category)) : "OUT OF STOCK"}</span>
+      </div>
+      <div class="product-info">
+        <span class="product-category">${escapeHtml(p.category)}</span>
+        <h3><button class="name-btn" type="button" data-view="${escapeHtml(p.id)}">${escapeHtml(p.name)}</button></h3>
+        <p>${escapeHtml(p.description)}</p>
+        ${stockText(p)}
+        <div class="product-bottom">
+          <span class="product-price">${money(p.price)}</span>
+          <button class="add-btn" aria-label="Add ${escapeHtml(p.name)} to cart" data-add="${escapeHtml(p.id)}" ${p.stock < 1 ? "disabled" : ""}>${p.stock < 1 ? "Unavailable" : "＋ Add"}</button>
+        </div>
+      </div>
+    </article>`).join("");
+  $("#emptyState").classList.toggle("hidden", list.length > 0);
+}
+
+function showProductsMessage(message) {
+  $("#productGrid").innerHTML = `<div class="empty"><p>${escapeHtml(message)}</p></div>`;
+  $("#emptyState").classList.add("hidden");
+}
+
+function renderCart() {
+  const d = cartDetails();
+  const count = d.reduce((s, p) => s + p.quantity, 0);
+  const sub = d.reduce((s, p) => s + p.price * p.quantity, 0);
+  const fee = deliveryFee(sub);
+  $("#cartCount").textContent = count;
+  $("#cartSubtotal").textContent = $("#checkoutSubtotal").textContent = money(sub);
+  $("#cartDelivery").textContent = $("#checkoutDelivery").textContent = d.length && !fee ? "Free" : money(fee);
+  $("#cartTotal").textContent = $("#checkoutTotal").textContent = money(sub + fee);
+  $("#cartItems").innerHTML = d.length
+    ? d.map((p) => `
+      <div class="cart-row">
+        <img class="cart-thumb" src="${escapeHtml(safeImage(p.image))}" alt="">
+        <div><strong>${escapeHtml(p.name)}</strong><small>${money(p.price)} each · ${money(p.price * p.quantity)}</small></div>
+        <div class="qty-controls">
+          <button data-qty="${escapeHtml(p.id)}" data-delta="-1" aria-label="Decrease quantity of ${escapeHtml(p.name)}">−</button>
+          <span>${p.quantity}</span>
+          <button data-qty="${escapeHtml(p.id)}" data-delta="1" aria-label="Increase quantity of ${escapeHtml(p.name)}" ${p.quantity >= p.stock ? "disabled" : ""}>＋</button>
+          <button data-remove="${escapeHtml(p.id)}" aria-label="Remove ${escapeHtml(p.name)}">×</button>
+        </div>
+      </div>`).join("")
+    : '<div class="empty"><p>Your cart is empty.</p><button class="outline-btn" type="button" data-shop>Browse products</button></div>';
+  $("#checkoutBtn").disabled = !d.length;
+  $("#checkoutBtn").style.opacity = d.length ? 1 : 0.5;
+}
+
+/* ---------- Modals and cart drawer ---------- */
+
+function openCart() {
+  if (reconcileCart()) toast("Your cart was updated to match current stock.", true);
+  renderCart();
+  $("#overlay").classList.remove("hidden");
+  $("#cartDrawer").classList.add("open");
+}
+
+function closeCart() {
+  $("#overlay").classList.add("hidden");
+  $("#cartDrawer").classList.remove("open");
+}
+
+function openModal(id) {
+  closeCart();
+  document.querySelectorAll(".modal").forEach((m) => m.classList.add("hidden"));
+  lastFocus = document.activeElement;
+  $("#overlay").classList.remove("hidden");
+  const m = $("#" + id);
+  m.classList.remove("hidden");
+  m.scrollTop = 0;
+  const first = m.querySelector("input:not([disabled]),button");
+  if (first) first.focus();
+}
+
+function closeModals() {
+  const open = [...document.querySelectorAll(".modal")].some((m) => !m.classList.contains("hidden"));
+  document.querySelectorAll(".modal").forEach((m) => m.classList.add("hidden"));
+  $("#overlay").classList.add("hidden");
+  if (open && lastFocus && lastFocus.isConnected) lastFocus.focus();
+}
+
+function openProduct(id) {
+  const p = products.find((x) => x.id === id);
+  if (!p) return;
+  const out = p.stock < 1;
+  $("#productDetails").innerHTML = `
+    <div class="details-grid">
+      <div class="details-image"><img src="${escapeHtml(safeImage(p.image))}" alt="${escapeHtml(p.name)}"></div>
+      <div>
+        <span class="product-category">${escapeHtml(p.category)}</span>
+        <h2>${escapeHtml(p.name)}</h2>
+        <strong class="details-price">${money(p.price)}</strong>
+        <p>${escapeHtml(p.description || "No description yet.")}</p>
+        ${stockText(p)}
+        <form class="details-buy" id="detailsForm" data-id="${escapeHtml(p.id)}">
+          <label>Quantity<input name="qty" type="number" min="1" max="${Math.max(1, p.stock)}" step="1" value="1" required ${out ? "disabled" : ""}></label>
+          <button class="primary-btn" ${out ? "disabled" : ""}>${out ? "Out of stock" : "Add to cart"}</button>
+        </form>
+        <p class="demo-note">Always read the label, and ask a pharmacist if you are unsure about a product.</p>
+      </div>
+    </div>`;
+  openModal("productModal");
+}
+
+/* ---------- Firebase ---------- */
+
+let anonymousSignIn = null;
+async function currentUser() {
+  await auth.authStateReady();
+  if (auth.currentUser) return auth.currentUser;
+  if (!anonymousSignIn) {
+    anonymousSignIn = au.signInAnonymously(auth).then((c) => c.user).finally(() => { anonymousSignIn = null; });
+  }
+  return anonymousSignIn;
+}
+
+function watchProducts() {
+  const visible = fs.query(fs.collection(db, "products"), fs.where("active", "==", true));
+  fs.onSnapshot(visible, (snap) => {
+    products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    productsLoaded = true;
+    reconcileCart();
+    if (!products.length) showProductsMessage("No products are available right now. Please check back soon.");
+    else loadProducts();
+    renderCart();
+  }, (err) => {
+    console.error("Products could not be loaded", err);
+    showProductsMessage("Products could not be loaded. Check your connection and refresh the page.");
+  });
+}
+
+const orderNumber = (id) => id.slice(0, 8).toUpperCase();
+const orderDate = (o) => (o.createdAt && o.createdAt.toDate ? o.createdAt.toDate().toLocaleString("en-GB") : "Just now");
+
+async function showOrders() {
+  $("#myOrders").innerHTML = '<p class="empty">Loading your orders...</p>';
+  openModal("ordersModal");
+  try {
+    await auth.authStateReady();
+    const user = auth.currentUser;
+    if (!user) {
+      $("#myOrders").innerHTML = '<p class="empty">No orders yet. Orders you place on this device appear here.</p>';
+      return;
+    }
+    const snap = await fs.getDocs(fs.query(fs.collection(db, "orders"), fs.where("uid", "==", user.uid)));
+    const orders = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    $("#myOrders").innerHTML = orders.length
+      ? orders.map((o) => `
+        <article class="order-card">
+          <div class="order-top"><strong>Order #${orderNumber(o.id)}</strong><span class="status-pill">${escapeHtml(o.status)}</span></div>
+          <p>${escapeHtml(orderDate(o))}</p>
+          <ul>${o.items.map((i) => `<li>${escapeHtml(i.name)} &times; ${Number(i.quantity)} (${money(i.price * i.quantity)})</li>`).join("")}</ul>
+          <strong>${money(o.total)}</strong> <small>including ${money(o.deliveryFee)} delivery</small>
+        </article>`).join("")
+      : '<p class="empty">No orders yet. Orders you place on this device appear here.</p>';
+  } catch (err) {
+    console.error("Orders could not be loaded", err);
+    $("#myOrders").innerHTML = '<p class="empty">Your orders could not be loaded. Please try again.</p>';
+  }
+}
+
+async function placeOrder(form) {
+  const feedback = $("#checkoutFeedback");
+  const button = form.querySelector('button[type="submit"]');
+  feedback.textContent = "";
+  if (reconcileCart()) {
+    feedback.textContent = "Stock changed, so your cart was updated. Check the total and place the order again.";
+    return;
+  }
+  const details = cartDetails();
+  if (!details.length) return;
+  const subtotal = details.reduce((s, p) => s + p.price * p.quantity, 0);
+  const fee = deliveryFee(subtotal);
+  const f = new FormData(form);
+  button.disabled = true;
+  button.textContent = "Placing order...";
+  try {
+    const user = await currentUser();
+    const ref = await fs.addDoc(fs.collection(db, "orders"), {
+      uid: user.uid,
+      customer: {
+        name: String(f.get("name")).trim(),
+        email: String(f.get("email")).trim(),
+        phone: String(f.get("phone")).trim(),
+        address: String(f.get("address")).trim(),
+        notes: String(f.get("notes") || "").trim()
+      },
+      items: details.map((p) => ({ productId: p.id, name: p.name, price: p.price, quantity: p.quantity })),
+      subtotal,
+      deliveryFee: fee,
+      total: subtotal + fee,
+      status: "Pending",
+      stockDeducted: false,
+      createdAt: fs.serverTimestamp()
+    });
+    const phone = String(f.get("phone")).trim();
+    cart = [];
+    saveCart();
+    form.reset();
+    $("#successMessage").textContent = `Your order number is ${orderNumber(ref.id)}. Total: ${money(subtotal + fee)}, paid in cash on delivery. We will call you on ${phone} to confirm it.`;
+    openModal("successModal");
+  } catch (err) {
+    console.error("Order could not be placed", err);
+    feedback.textContent = "We could not place your order. Check your connection and try again.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Place order";
+  }
+}
+
+async function sendMessage(form) {
+  const feedback = $("#contactFeedback");
+  const button = form.querySelector("button");
+  button.disabled = true;
+  feedback.textContent = "Sending...";
+  try {
+    await fs.addDoc(fs.collection(db, "messages"), {
+      name: $("#contactName").value.trim(),
+      email: $("#contactEmail").value.trim(),
+      message: $("#contactMessage").value.trim(),
+      createdAt: fs.serverTimestamp()
+    });
+    feedback.textContent = "Thanks! Your message was sent. We will reply by email.";
+    form.reset();
+  } catch (err) {
+    console.error("Message could not be sent", err);
+    feedback.textContent = "Your message could not be sent. Please try again.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* ---------- Events ---------- */
+
+$("#productGrid").addEventListener("click", (e) => {
+  const add = e.target.closest("[data-add]");
+  if (add) { addToCart(add.dataset.add, 1); return; }
+  const view = e.target.closest("[data-view]");
+  if (view) openProduct(view.dataset.view);
+});
+
+$("#productDetails").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target.closest("#detailsForm");
+  if (addToCart(f.dataset.id, Math.max(1, Math.floor(Number(f.elements.qty.value) || 1)))) closeModals();
+});
+
+$("#cartItems").addEventListener("click", (e) => {
+  const q = e.target.closest("[data-qty]");
+  const r = e.target.closest("[data-remove]");
+  if (r) cart = cart.filter((x) => x.id !== r.dataset.remove);
+  if (q) {
+    const item = cart.find((x) => x.id === q.dataset.qty);
+    const p = products.find((x) => x.id === q.dataset.qty);
+    if (item) {
+      item.quantity = Math.min(p ? p.stock : item.quantity, item.quantity + Number(q.dataset.delta));
+      if (item.quantity < 1) cart = cart.filter((x) => x !== item);
+    }
+  }
+  saveCart();
+});
+
+$("#filters").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-category]");
+  if (!b) return;
+  activeCategory = b.dataset.category;
+  document.querySelectorAll(".filter").forEach((x) => x.classList.toggle("active", x === b));
+  loadProducts();
+});
+
+let searchTimer;
+$("#searchInput").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadProducts, 200); });
+$("#sortSelect").addEventListener("change", loadProducts);
+$("#stockOnly").addEventListener("change", loadProducts);
+$("#clearFilters").addEventListener("click", () => {
+  $("#searchInput").value = "";
+  $("#stockOnly").checked = false;
+  activeCategory = "All";
+  document.querySelectorAll(".filter").forEach((x) => x.classList.toggle("active", x.dataset.category === "All"));
+  loadProducts();
+});
+
+$("#openCart").addEventListener("click", openCart);
+$("#closeCart").addEventListener("click", closeCart);
+$("#overlay").addEventListener("click", () => { closeModals(); closeCart(); });
+$("#checkoutBtn").addEventListener("click", () => { $("#checkoutFeedback").textContent = ""; openModal("checkoutModal"); });
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close]")) closeModals();
+  if (e.target.closest("[data-orders]")) { e.preventDefault(); if (isConfigured) showOrders(); }
+  if (e.target.closest("[data-shop]")) { closeCart(); $("#products").scrollIntoView(); }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModals(); closeCart(); } });
+
+$("#checkoutForm").addEventListener("submit", (e) => { e.preventDefault(); placeOrder(e.currentTarget); });
+$("#contactForm").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(e.currentTarget); });
+
+$("#menuToggle").addEventListener("click", () =>
+  $("#menuToggle").setAttribute("aria-expanded", String($("#mainNav").classList.toggle("open"))));
+$("#mainNav").addEventListener("click", (e) => {
+  if (e.target.tagName === "A") {
+    $("#mainNav").classList.remove("open");
+    $("#menuToggle").setAttribute("aria-expanded", "false");
+  }
+});
+
+window.addEventListener("storage", (e) => { if (e.key === "medicare_cart") { cart = readCart(); renderCart(); } });
+
+/* ---------- Start ---------- */
+
+$("#year").textContent = new Date().getFullYear();
+if (SHOW_DEMO_NOTICE) $("#demoNotice").classList.remove("hidden");
+renderCart();
+if (isConfigured) {
+  watchProducts();
+} else {
+  showProductsMessage("The store is not connected to its database yet.");
+  $("#checkoutForm").querySelector('button[type="submit"]').disabled = true;
+  $("#contactForm").querySelector("button").disabled = true;
+}
